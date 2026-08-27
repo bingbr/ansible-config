@@ -1,0 +1,14 @@
+# Managed by fedora-workstation-ansible (zsh_ricing).
+autoload -Uz compinit
+compinit
+
+zstyle :omz:plugins:iterm2 shell-integration yes
+ZSH_THEME="robbyrussell"
+
+# So a half-finished run still leaves a working shell.
+if [[ -r "$HOME/.antidote/antidote.zsh" ]]; then
+  source "$HOME/.antidote/antidote.zsh"
+  antidote load
+else
+  print -u2 "zsh_ricing: ~/.antidote is missing, so plugins are not loaded."
+fi

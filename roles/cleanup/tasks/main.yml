@@ -1,0 +1,75 @@
+---
+- name: Check nothing is on the keep list and the remove list
+  ansible.builtin.assert:
+    that:
+      - >-
+        cleanup_debloat_packages
+        | intersect(cleanup_preserved_packages + cleanup_shared_packages_to_keep)
+        | length == 0
+    fail_msg: >-
+      These are on the remove list and the keep list at the same time:
+      {{ cleanup_debloat_packages
+         | intersect(cleanup_preserved_packages + cleanup_shared_packages_to_keep)
+         | join(', ') }}.
+
+- name: Check no pattern matches something I want to keep
+  ansible.builtin.assert:
+    that:
+      - >-
+        (cleanup_preserved_packages + cleanup_shared_packages_to_keep)
+        | select('match', item)
+        | list
+        | length == 0
+    fail_msg: "Pattern {{ item }} matches a package I wanted to keep."
+  loop: "{{ cleanup_debloat_package_patterns }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: List installed packages
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Pick the listed packages that are actually installed
+  ansible.builtin.set_fact:
+    cleanup_installed_debloat_packages: >-
+      {{ cleanup_debloat_packages | intersect(ansible_facts.packages.keys() | list) }}
+
+- name: Add anything matching the patterns
+  ansible.builtin.set_fact:
+    cleanup_installed_debloat_packages: >-
+      {{ cleanup_installed_debloat_packages
+         | union(ansible_facts.packages.keys()
+                 | select('match', item)
+                 | list
+                 | difference(cleanup_debloat_pattern_exceptions)) }}
+  loop: "{{ cleanup_debloat_package_patterns }}"
+  loop_control:
+    label: "{{ item }}"
+
+- name: Remove the unwanted packages
+  ansible.builtin.dnf5:
+    name: "{{ cleanup_installed_debloat_packages }}"
+    state: absent
+  when: cleanup_installed_debloat_packages | length > 0
+
+- name: Work out which guest agent is pointless here
+  ansible.builtin.set_fact:
+    cleanup_guest_packages_to_remove: >-
+      {{ ['virtualbox-guest-additions']
+         if ansible_facts['virtualization_role'] == 'guest'
+            and ansible_facts['virtualization_type'] in ['kvm', 'qemu']
+         else ['qemu-guest-agent']
+         if ansible_facts['virtualization_role'] == 'guest'
+            and ansible_facts['virtualization_type'] in ['virtualbox', 'oracle']
+         else ['qemu-guest-agent', 'virtualbox-guest-additions']
+         if ansible_facts['virtualization_role'] in ['host', 'NA']
+            or ansible_facts['virtualization_type'] in ['none', 'NA']
+         else [] }}
+
+- name: Remove the guest agent this machine can't use
+  ansible.builtin.dnf5:
+    name: >-
+      {{ cleanup_guest_packages_to_remove | intersect(ansible_facts.packages.keys() | list) }}
+    state: absent
+  when: >-
+    cleanup_guest_packages_to_remove | intersect(ansible_facts.packages.keys() | list) | length > 0

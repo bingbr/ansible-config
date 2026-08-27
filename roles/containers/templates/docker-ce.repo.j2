@@ -1,0 +1,8 @@
+[docker-ce-stable]
+name=Docker CE Stable - $basearch
+baseurl=https://download.docker.com/linux/fedora/$releasever/$basearch/stable
+enabled={{ containers_docker_repo_enabled | ternary(1, 0) }}
+gpgcheck=1
+gpgkey=file:///etc/pki/rpm-gpg/RPM-GPG-KEY-docker
+# Stops dnf erroring when Docker has not published for this release.
+skip_if_unavailable=1

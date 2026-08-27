@@ -1,0 +1,6 @@
+---
+desktop_dev_rust_system_packages:
+  - gcc
+  - make
+  - pkgconf-pkg-config
+  - rustup

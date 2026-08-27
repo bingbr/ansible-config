@@ -1,0 +1,11 @@
+---
+web_dev_packages:
+  - curl
+  - unzip
+
+web_dev_bun_installer_url: https://bun.sh/install
+
+web_dev_vite_plus_installer_url: https://vite.plus
+
+web_dev_bun_global_packages:
+  - "@openai/codex"

@@ -1,0 +1,29 @@
+---
+system_explicit_packages:
+  - btop
+  - git
+  - gnome-calculator
+  - gnome-clocks
+  - gnome-text-editor
+  - gnome-tweaks
+  - loupe
+  - nautilus
+  - ripgrep
+
+system_rpmfusion_repositories:
+  - name: free
+    package: rpmfusion-free-release
+    key_url: https://download1.rpmfusion.org/free/fedora/RPM-GPG-KEY-rpmfusion-free-fedora-2020
+    key_fingerprint: E9A491A3DE247814E7E067EAE06F8ECDD651FF2E
+    key_id: D651FF2E
+    release_url: >-
+      https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-{{ ansible_facts['distribution_major_version'] }}.noarch.rpm
+    release_path: /var/tmp/rpmfusion-free-release.noarch.rpm
+  - name: nonfree
+    package: rpmfusion-nonfree-release
+    key_url: https://download1.rpmfusion.org/nonfree/fedora/RPM-GPG-KEY-rpmfusion-nonfree-fedora-2020
+    key_fingerprint: 79BDB88F9BBF73910FD4095B6A2AF96194843C65
+    key_id: 94843C65
+    release_url: >-
+      https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-{{ ansible_facts['distribution_major_version'] }}.noarch.rpm
+    release_path: /var/tmp/rpmfusion-nonfree-release.noarch.rpm

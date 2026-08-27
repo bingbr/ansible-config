@@ -1,0 +1,9 @@
+---
+- name: Mention the logout Docker needs
+  ansible.builtin.debug:
+    msg: Log out and back in before using Docker without sudo.
+
+- name: Restart Docker
+  ansible.builtin.systemd_service:
+    name: docker
+    state: restarted

@@ -1,0 +1,196 @@
+---
+- name: Find the mount for /
+  ansible.builtin.set_fact:
+    snapshots_root_mount: >-
+      {{ ansible_facts.mounts | selectattr('mount', 'equalto', '/') | first | default({}) }}
+
+- name: Say why snapshots are being skipped
+  ansible.builtin.debug:
+    msg: >-
+      Root is {{ snapshots_root_mount.fstype | default('undetected') }}, not btrfs, so there is
+      nothing to snapshot. Skipping.
+  when: snapshots_root_mount.fstype | default('') != 'btrfs'
+
+- name: Set up snapshots and boot entries
+  when: snapshots_root_mount.fstype | default('') == 'btrfs'
+  block:
+    # A custom install can name it anything.
+    - name: Find the name of the root subvolume
+      ansible.builtin.set_fact:
+        snapshots_root_subvolume: >-
+          {{ snapshots_root_mount.options
+             | regex_search('subvol=/([^,]+)', '\1')
+             | default([], true) | first | default('') }}
+
+    - name: Check the subvolume was found
+      ansible.builtin.assert:
+        that:
+          - snapshots_root_subvolume | length > 0
+          - snapshots_root_mount.uuid | default('') | length > 0
+        fail_msg: >-
+          Could not read subvol= or a UUID from the root mount, so /.snapshots cannot be set up.
+          Its options were {{ snapshots_root_mount.options | default('none') }}
+
+    - name: List installed packages
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Install snapper
+      ansible.builtin.dnf5:
+        name: "{{ snapshots_packages }}"
+        state: present
+
+    - name: Look for an existing snapper config
+      ansible.builtin.stat:
+        path: /etc/snapper/configs/{{ snapshots_snapper_config }}
+      register: snapshots_snapper_config_state
+
+    # This also makes the .snapshots subvolume.
+    - name: Create the snapper config
+      ansible.builtin.command:
+        argv:
+          - snapper
+          - --config
+          - "{{ snapshots_snapper_config }}"
+          - create-config
+          - /
+      when: not snapshots_snapper_config_state.stat.exists
+      changed_when: true
+
+    - name: Tell snapper how many snapshots to keep
+      ansible.builtin.lineinfile:
+        path: /etc/snapper/configs/{{ snapshots_snapper_config }}
+        regexp: "^{{ item.key }}="
+        line: '{{ item.key }}="{{ item.value }}"'
+        owner: root
+        group: root
+        mode: "0640"
+      loop: "{{ snapshots_snapper_settings | dict2items }}"
+      loop_control:
+        label: "{{ item.key }}"
+      when: snapshots_snapper_config_state.stat.exists or not ansible_check_mode
+
+    - name: Turn on snapshot cleanup
+      ansible.builtin.systemd_service:
+        name: snapper-cleanup.timer
+        enabled: true
+        state: started
+      when: not ansible_check_mode or 'snapper' in ansible_facts.packages
+
+    - name: Turn off timed snapshots
+      ansible.builtin.systemd_service:
+        name: snapper-timeline.timer
+        enabled: false
+        state: stopped
+      when: not ansible_check_mode or 'snapper' in ansible_facts.packages
+
+    # grub-btrfs won't start until /.snapshots is in fstab.
+    - name: Add /.snapshots to fstab
+      ansible.posix.mount:
+        path: /.snapshots
+        src: UUID={{ snapshots_root_mount.uuid }}
+        fstype: btrfs
+        opts: subvol={{ snapshots_root_subvolume }}/.snapshots,{{ snapshots_mount_options }}
+        state: present
+      when: not ansible_check_mode or 'snapper' in ansible_facts.packages
+
+    - name: Mount /.snapshots
+      ansible.builtin.systemd_service:
+        name: '\x2esnapshots.mount'
+        daemon_reload: true
+        state: started
+      when: not ansible_check_mode or 'snapper' in ansible_facts.packages
+
+    - name: Enable the grub-btrfs COPR
+      community.general.copr:
+        name: "{{ snapshots_grub_btrfs_copr }}"
+        state: enabled
+      when: snapshots_enable_grub_menu
+
+    - name: Say what grub-btrfs would install
+      ansible.builtin.debug:
+        msg: >-
+          Would install {{ snapshots_grub_btrfs_packages | join(', ') }}
+          from the {{ snapshots_grub_btrfs_copr }} COPR.
+      changed_when: "'grub-btrfs' not in ansible_facts.packages"
+      when:
+        - snapshots_enable_grub_menu
+        - ansible_check_mode
+
+    - name: Install grub-btrfs
+      ansible.builtin.dnf5:
+        name: "{{ snapshots_grub_btrfs_packages }}"
+        state: present
+      when:
+        - snapshots_enable_grub_menu
+        - not ansible_check_mode
+
+    - name: Read GRUB's saved settings
+      ansible.builtin.command:
+        argv:
+          - grub2-editenv
+          - list
+      register: snapshots_grub_environment
+      changed_when: false
+
+    # Fedora hides the menu after a good boot, which hides the snapshots too.
+    - name: Stop GRUB from hiding the menu
+      ansible.builtin.command:
+        argv:
+          - grub2-editenv
+          - "-"
+          - unset
+          - menu_auto_hide
+      when: "'menu_auto_hide' in snapshots_grub_environment.stdout"
+      changed_when: true
+
+    - name: Show the GRUB menu at boot
+      ansible.builtin.lineinfile:
+        path: /etc/default/grub
+        regexp: ^GRUB_TIMEOUT_STYLE=
+        line: GRUB_TIMEOUT_STYLE=menu
+        owner: root
+        group: root
+        mode: "0644"
+      notify: Rebuild the GRUB config
+
+    - name: Start the grub-btrfs watcher
+      ansible.builtin.systemd_service:
+        name: grub-btrfs.path
+        enabled: true
+        state: started
+      when:
+        - snapshots_enable_grub_menu
+        - not ansible_check_mode or 'grub-btrfs' in ansible_facts.packages
+      notify: Rebuild the GRUB config
+
+    - name: Take a snapshot before anything changes
+      ansible.builtin.command:
+        argv:
+          - snapper
+          - --config
+          - "{{ snapshots_snapper_config }}"
+          - create
+          - --type
+          - single
+          - --cleanup-algorithm
+          - number
+          - --description
+          - Before fedora-workstation-ansible run
+      changed_when: true
+      when:
+        - not ansible_check_mode
+        - workstation_active_profiles | difference(['snapshots']) | length > 0
+
+    - name: Drop all but the newest five snapshots
+      ansible.builtin.command:
+        argv:
+          - snapper
+          - --config
+          - "{{ snapshots_snapper_config }}"
+          - cleanup
+          - number
+      changed_when: false
+      when:
+        - not ansible_check_mode
+        - workstation_active_profiles | difference(['snapshots']) | length > 0

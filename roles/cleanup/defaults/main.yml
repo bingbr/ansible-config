@@ -1,0 +1,197 @@
+---
+cleanup_debloat_packages:
+  # GNOME apps I don't use.
+  - gnome-boxes
+  - gnome-calendar
+  - gnome-connections
+  - gnome-maps
+  - gnome-contacts
+  - gnome-tour
+  - gnome-photos
+  - gnome-weather
+  - cheese
+  - snapshot
+  - rhythmbox
+  - totem
+  - decibels
+  - showtime
+  - mediawriter
+  - simple-scan
+  - firefox
+  - firefox-langpacks
+
+  # Goes with LibreOffice.
+  - unoconv
+
+  # The live installer.
+  - anaconda-live
+  - anaconda-webui
+
+  # The web console.
+  - cockpit-ws
+  - cockpit-ws-selinux
+  - cockpit-bridge
+  - cockpit-system
+  - cockpit-networkmanager
+  - cockpit-storaged
+
+  # Virtualization. Guest agents are handled in tasks instead.
+  - virt-manager
+  - virt-manager-common
+  - libvirt-daemon-kvm
+  - libvirt-daemon-config-network
+  - qemu-kvm
+  - qemu-kvm-core
+  - qemu-system-x86
+  - qemu-system-x86-core
+
+  # More of the same. The removal won't resolve without them.
+  - python3-libvirt
+  - virt-install
+  - virt-viewer
+
+  # Printing. cups-libs and cups-pk-helper stay, GNOME needs them.
+  - braille-printer-app
+  - cups
+  - cups-browsed
+  - cups-filters
+  - cups-filters-driverless
+  - bluez-cups
+  - gutenprint
+  - gutenprint-cups
+  - hplip
+  - libppd
+  - libsane-hpaio
+  - mpage
+  - paps
+  - system-config-printer
+  - system-config-printer-udev
+
+  # LibreOffice's libraries. The pattern below doesn't match these names.
+  - autocorr-en
+  - clucene-contribs-lib
+  - clucene-core
+  - google-carlito-fonts
+  - google-crosextra-caladea-fonts
+  - hyphen-en
+  - libabw
+  - libcdr
+  - libcmis
+  - libe-book
+  - libeot
+  - libepubgen
+  - libetonyek
+  - libexttextcat
+  - libfreehand
+  - liblangtag
+  - liblangtag-data
+  - libmspub
+  - libmwaw
+  - libnumbertext
+  - libodfgen
+  - liborcus
+  - libpagemaker
+  - libqxp
+  - librevenge
+  - libstaroffice
+  - libvisio
+  - libwpd
+  - libwpg
+  - libwps
+  - libzmf
+  - lpsolve
+  - mythes
+  - mythes-en
+  - raptor2
+  - rasqal
+  - redland
+
+  # Only LibreOffice Base used these.
+  - javapackages-filesystem
+  - tzdata-java
+
+  # More virtualization bits the patterns miss.
+  - gtk-vnc2
+  - gvnc
+  - gvncpulse
+  - ipxe-roms-qemu
+  - libcacard
+  - libtpms
+  - rutabaga-gfx-ffi
+  - seabios-bin
+  - seavgabios-bin
+  - usbredir
+  - virglrenderer
+  - virtiofsd
+  - xen-libs
+  - xen-licenses
+
+  # Storage backends for qemu.
+  - glusterfs
+  - glusterfs-cli
+  - glusterfs-client-xlators
+  - glusterfs-fuse
+  - libgfapi0
+  - libgfrpc0
+  - libgfxdr0
+  - libglusterfs0
+  - libiscsi
+  - libnbd
+  - libnfs
+  - librados2
+  - librbd1
+
+  # Printing and scanning leftovers.
+  - cups-client
+  - cups-ipptool
+  - gutenprint-libs
+  - ipp-usb
+  - libcupsfilters
+  - libsane-airscan
+  - python3-cups
+  - sane-airscan
+  - system-config-printer-libs
+
+# Some apps are split into subpackages that come and go, so match instead of list.
+cleanup_debloat_package_patterns:
+  - ^libreoffice-
+  - ^edk2-
+  - ^hplip
+  # Catches LibreOffice's Java runtime, not a JDK you installed yourself.
+  - ^java-([0-9]+|latest)-openjdk-(headless|crypto-adapter)$
+  - ^libvirt
+  - ^nbdkit
+  - ^qemu-
+  - ^sane-backends
+  - ^spice-
+  - ^swtpm
+
+# ^qemu- matches this one, but tasks decides whether it actually goes.
+cleanup_debloat_pattern_exceptions:
+  - qemu-guest-agent
+
+cleanup_preserved_packages:
+  - ImageMagick
+  - ImageMagick-libs
+  - btop
+  - git
+  - gnome-calculator
+  - gnome-clocks
+  - gnome-text-editor
+  - gnome-tweaks
+  - loupe
+  - nautilus
+  - ripgrep
+
+# Kept even though I don't use the hardware.
+cleanup_shared_packages_to_keep:
+  - ModemManager
+  - NetworkManager-wwan
+  - cups-libs
+  - cups-pk-helper
+
+  # These look like orphans, but something still needs each one.
+  - composefs-libs
+  - libnfsidmap
+  - libwmf-lite
+  - virt-what

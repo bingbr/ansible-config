@@ -1,0 +1,24 @@
+# Managed by fedora-workstation-ansible (remote).
+
+# Require key-based authentication.
+AuthenticationMethods publickey
+PubkeyAuthentication yes
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+GSSAPIAuthentication no
+HostbasedAuthentication no
+PermitEmptyPasswords no
+
+# Limit who can log in, and how hard they get to try.
+PermitRootLogin no
+AllowUsers {{ remote_ssh_allowed_users | join(' ') }}
+MaxAuthTries {{ remote_ssh_max_auth_tries }}
+LoginGraceTime {{ remote_ssh_login_grace_time }}
+MaxStartups {{ remote_ssh_max_startups }}
+
+# Turn off forwarding this desktop has no use for.
+X11Forwarding no
+AllowAgentForwarding no
+GatewayPorts no
+PermitTunnel no
+AllowTcpForwarding {{ remote_ssh_allow_tcp_forwarding | ternary('yes', 'no') }}

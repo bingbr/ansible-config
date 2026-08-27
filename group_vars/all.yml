@@ -1,0 +1,34 @@
+---
+# bootstrap.sh overrides this comma-separated value with --profiles.
+workstation_profile_csv: ""
+
+workstation_default_profiles:
+  - snapshots
+  - cleanup
+  - system
+  - desktop
+  - zsh_ricing
+  - containers
+
+# snapshots runs first, so it can snapshot before anything changes.
+workstation_profile_order:
+  - snapshots
+  - cleanup
+  - system
+  - desktop
+  - remote
+  - dns
+  - desktop_dev_rust
+  - web_dev
+  - zsh_ricing
+  - containers
+
+workstation_all_profiles: "{{ workstation_profile_order }}"
+
+workstation_target_user: "{{ lookup('env', 'USER') }}"
+# Only application IDs belong here. Flatpak installs their runtimes itself.
+desktop_flatpak_apps:
+  - name: app.zen_browser.zen
+    remote: flathub
+  - name: org.videolan.VLC
+    remote: flathub

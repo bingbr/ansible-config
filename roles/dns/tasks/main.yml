@@ -1,0 +1,35 @@
+---
+- name: Check the DNS endpoints are set
+  ansible.builtin.assert:
+    that:
+      - dns_endpoints | length > 0
+      - dns_endpoints | select('match', '^\S+$') | list | length == dns_endpoints | length
+    fail_msg: >-
+      The dns profile needs a vaulted dns_endpoints list.
+  when: dns_enable | bool
+
+- name: Create the resolved config directory
+  ansible.builtin.file:
+    path: /etc/systemd/resolved.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: dns_enable | bool
+
+- name: Configure DNS-over-TLS
+  ansible.builtin.template:
+    src: 80-dns.conf.j2
+    dest: /etc/systemd/resolved.conf.d/80-dns.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: dns_enable | bool
+  notify: Restart systemd-resolved
+
+- name: Remove the DNS config when it's turned off
+  ansible.builtin.file:
+    path: /etc/systemd/resolved.conf.d/80-dns.conf
+    state: absent
+  when: not dns_enable | bool
+  notify: Restart systemd-resolved

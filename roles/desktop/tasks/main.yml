@@ -1,0 +1,636 @@
+---
+- name: Download the Brave and Microsoft signing keys
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "{{ item.dest }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - url: https://brave-browser-rpm-release.s3.brave.com/brave-core.asc
+      dest: /etc/pki/rpm-gpg/RPM-GPG-KEY-brave-browser
+    - url: https://packages.microsoft.com/keys/microsoft.asc
+      dest: /etc/pki/rpm-gpg/RPM-GPG-KEY-microsoft
+
+- name: Check the keys arrived
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /etc/pki/rpm-gpg/RPM-GPG-KEY-brave-browser
+    - /etc/pki/rpm-gpg/RPM-GPG-KEY-microsoft
+  register: desktop_signing_keys
+
+- name: Import those keys
+  ansible.builtin.rpm_key:
+    key: "{{ item.item }}"
+    state: present
+  loop: "{{ desktop_signing_keys.results }}"
+  when: item.stat.exists
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Add the Brave repo
+  ansible.builtin.template:
+    src: brave-browser.repo.j2
+    dest: /etc/yum.repos.d/brave-browser.repo
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Add the VS Code repo
+  ansible.builtin.template:
+    src: vscode.repo.j2
+    dest: /etc/yum.repos.d/vscode.repo
+    owner: root
+    group: root
+    mode: "0644"
+
+# Ghostty is optional, don't fail the whole profile over it.
+- name: Enable the Ghostty COPR
+  community.general.copr:
+    name: scottames/ghostty
+    state: enabled
+  register: desktop_ghostty_copr
+  ignore_errors: true  # noqa ignore-errors
+
+- name: Say the Ghostty COPR is unavailable
+  ansible.builtin.debug:
+    msg: >-
+      Could not enable the scottames/ghostty COPR
+      ({{ desktop_ghostty_copr.msg | default('no reason given') }}). Ghostty is skipped.
+  when: desktop_ghostty_copr.failed | default(false)
+
+- name: See which desktop packages exist
+  ansible.builtin.command:
+    argv:
+      - dnf5
+      - repoquery
+      - --available
+      - --installed
+      - "{{ item }}"
+  loop: >-
+    {{ desktop_packages + (desktop_third_party_packages | map(attribute='name') | list) }}
+  register: desktop_package_availability
+  changed_when: false
+  check_mode: false
+  when: ansible_check_mode
+
+- name: Install the desktop packages
+  ansible.builtin.dnf5:
+    name: "{{ desktop_packages }}"
+    state: latest
+  when: not ansible_check_mode
+
+# Let one bad source fail on its own. The task below names it.
+- name: Install Brave, VS Code and Ghostty
+  ansible.builtin.dnf5:
+    name: "{{ item.name }}"
+    state: latest
+  loop: "{{ desktop_third_party_packages }}"
+  loop_control:
+    label: "{{ item.name }}"
+  register: desktop_third_party_install
+  ignore_errors: true  # noqa ignore-errors
+  when: not ansible_check_mode
+
+- name: Name anything that didn't install
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.item.name }} did not install from {{ item.item.source }}. Everything else carried on.
+  loop: >-
+    {{ desktop_third_party_install.results | default([])
+       | selectattr('failed', 'defined') | selectattr('failed') | list }}
+  loop_control:
+    label: "{{ item.item.name }}"
+  when: not ansible_check_mode
+
+- name: Check what the desktop packages would do
+  ansible.builtin.dnf5:
+    name: "{{ item.item }}"
+    state: latest
+  loop: "{{ desktop_package_availability.results }}"
+  when:
+    - ansible_check_mode
+    - item.stdout | length > 0
+  loop_control:
+    label: "{{ item.item }}"
+
+- name: Create the VS Code config directory
+  ansible.builtin.file:
+    path: "{{ workstation_target_home }}/.config/Code/User"
+    state: directory
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+    mode: "0755"
+
+- name: Write my VS Code settings
+  ansible.builtin.template:
+    src: vscode-settings.json.j2
+    dest: "{{ workstation_target_home }}/.config/Code/User/settings.json"
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+    mode: "0644"
+
+- name: Look for the code command
+  ansible.builtin.stat:
+    path: /usr/bin/code
+  register: desktop_vscode_command
+
+- name: List the VS Code extensions already installed
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/env
+      - -u
+      - VSCODE_IPC_HOOK_CLI
+      - /usr/bin/code
+      - --extensions-dir
+      - "{{ workstation_target_home }}/.vscode/extensions"
+      - --list-extensions
+      - --show-versions
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+  register: desktop_vscode_installed_extensions
+  changed_when: false
+  check_mode: false
+  when: desktop_vscode_command.stat.exists
+
+- name: Note their IDs
+  ansible.builtin.set_fact:
+    desktop_vscode_installed_extension_ids: >-
+      {{ desktop_vscode_installed_extensions.stdout_lines | default([])
+         | map('regex_replace', '@[^@]+$', '') | list }}
+  when: desktop_vscode_command.stat.exists
+
+- name: Say which VS Code extensions are missing
+  ansible.builtin.debug:
+    msg: "Would install curated VS Code extension {{ item }}."
+  loop: "{{ desktop_vscode_extensions }}"
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - desktop_vscode_command.stat.exists
+    - item not in desktop_vscode_installed_extension_ids
+  loop_control:
+    label: "{{ item }}"
+
+- name: Install my VS Code extensions
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/env
+      - -u
+      - VSCODE_IPC_HOOK_CLI
+      - /usr/bin/code
+      - --extensions-dir
+      - "{{ workstation_target_home }}/.vscode/extensions"
+      - --install-extension
+      - "{{ item }}"
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+  loop: "{{ desktop_vscode_extensions }}"
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - desktop_vscode_command.stat.exists
+  loop_control:
+    label: "{{ item }}"
+
+- name: List the extensions again
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/env
+      - -u
+      - VSCODE_IPC_HOOK_CLI
+      - /usr/bin/code
+      - --extensions-dir
+      - "{{ workstation_target_home }}/.vscode/extensions"
+      - --list-extensions
+      - --show-versions
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+  register: desktop_vscode_extensions_after_refresh
+  changed_when: false
+  when:
+    - not ansible_check_mode
+    - desktop_vscode_command.stat.exists
+
+- name: Say whether any extension changed
+  ansible.builtin.debug:
+    msg: Curated VS Code extensions were installed or updated.
+  changed_when: >-
+    (desktop_vscode_installed_extensions.stdout_lines | default([]) | sort)
+    != (desktop_vscode_extensions_after_refresh.stdout_lines | default([]) | sort)
+  when:
+    - not ansible_check_mode
+    - desktop_vscode_command.stat.exists
+
+- name: Install Flatpak, in case system didn't run
+  ansible.builtin.dnf5:
+    name: flatpak
+    state: present
+
+- name: Install dbus-x11, which the Fedora remote needs
+  ansible.builtin.dnf5:
+    name: dbus-x11
+    state: present
+  when: >-
+    desktop_flatpak_apps
+    | selectattr('remote', 'equalto', 'fedora')
+    | list
+    | length > 0
+
+- name: Add Flathub, in case system didn't run
+  community.general.flatpak_remote:
+    name: flathub
+    flatpakrepo_url: https://dl.flathub.org/repo/flathub.flatpakrepo
+    method: system
+    state: present
+
+- name: List the Flatpak remotes
+  ansible.builtin.command:
+    argv:
+      - flatpak
+      - remotes
+      - --columns=name
+  register: desktop_flatpak_remotes
+  changed_when: false
+  check_mode: false
+
+- name: Install my Flatpak apps
+  community.general.flatpak:
+    name: "{{ item.name }}"
+    remote: "{{ item.remote }}"
+    method: system
+    state: latest
+  loop: "{{ desktop_flatpak_apps }}"
+  when: not ansible_check_mode or item.remote in desktop_flatpak_remotes.stdout_lines
+  loop_control:
+    label: "{{ item.name }} from {{ item.remote }}"
+
+- name: Create the GNOME extensions directory
+  ansible.builtin.file:
+    path: "{{ workstation_target_home }}/.local/share/gnome-shell/extensions"
+    state: directory
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+    mode: "0755"
+
+- name: Install glib2, for compiling extension schemas
+  ansible.builtin.dnf5:
+    name: glib2
+    state: present
+
+- name: Read the GNOME Shell version
+  ansible.builtin.command:
+    argv: [gnome-shell, --version]
+  register: desktop_gnome_shell_version
+  changed_when: false
+  check_mode: false
+
+- name: Check that version looks sane
+  ansible.builtin.assert:
+    that:
+      - desktop_gnome_shell_version.rc == 0
+      - desktop_gnome_shell_version.stdout is match('^GNOME Shell [0-9]+([.][0-9]+)*$')
+    fail_msg: >-
+      Could not read a usable GNOME Shell version from
+      {{ desktop_gnome_shell_version.stdout | default('no output') }}.
+
+- name: Keep the major version
+  ansible.builtin.set_fact:
+    desktop_gnome_shell_major: "{{ desktop_gnome_shell_version.stdout | regex_search('[0-9]+') }}"
+
+- name: Check the extension IDs look right
+  ansible.builtin.assert:
+    that:
+      - item.uuid is match('^[^/?#&]+@[^/?#&]+$')
+    fail_msg: >-
+      The GNOME extension ID {{ item.uuid | default('unknown') }} is invalid.
+  loop: "{{ desktop_gnome_extensions }}"
+  loop_control:
+    label: "{{ item.uuid }}"
+
+- name: Ask extensions.gnome.org about each extension
+  ansible.builtin.uri:
+    url: "https://extensions.gnome.org/extension-info/?uuid={{ item.uuid | urlencode }}&shell_version={{ desktop_gnome_shell_major }}"
+    return_content: true
+    # A 404 means it's gone from the site. Handled below.
+    status_code:
+      - 200
+      - 404
+    headers:
+      Accept: application/json
+      User-Agent: fedora-workstation-ansible
+  loop: "{{ desktop_gnome_extensions }}"
+  register: desktop_extension_release_queries
+  changed_when: false
+  check_mode: false
+  loop_control:
+    label: "{{ item.uuid }}"
+
+# The site hands back its newest release for a Shell version it doesn't know, so trust
+# shell_version_map instead of the reply itself.
+- name: Name the extensions with no release for this Shell
+  ansible.builtin.debug:
+    msg: >-
+      {{ item.item.uuid }} has no release for GNOME Shell {{ desktop_gnome_shell_major }}
+      {{ '(and is not on extensions.gnome.org at all)' if item.status | default(0) == 404 else '' }},
+      so it stays off. Try again once its author catches up.
+  loop: "{{ desktop_extension_release_queries.results }}"
+  when: desktop_gnome_shell_major not in ((item.json | default({})).shell_version_map | default({}))
+  loop_control:
+    label: "{{ item.item.uuid }}"
+
+- name: Check the answers are usable
+  ansible.builtin.assert:
+    that:
+      - item.json.uuid | default('') == item.item.uuid
+      - (item.json.version_tag | default('') | string) is match('^[0-9]+$')
+      - (item.json.download_url | default('')) is match('^/download-extension/')
+    fail_msg: >-
+      extensions.gnome.org gave back no usable release of {{ item.item.uuid }}
+      for GNOME Shell {{ desktop_gnome_shell_major }}.
+  loop: "{{ desktop_extension_release_queries.results }}"
+  when: desktop_gnome_shell_major in ((item.json | default({})).shell_version_map | default({}))
+  loop_control:
+    label: "{{ item.item.uuid }}"
+
+# The loop below might not run, and later loops need this to exist.
+- name: Start with an empty list of releases
+  ansible.builtin.set_fact:
+    desktop_extension_releases: []
+
+- name: Note which release to download for each one
+  ansible.builtin.set_fact:
+    desktop_extension_releases: >-
+      {{ (desktop_extension_releases | default([]))
+         + [{'uuid': item.item.uuid,
+             'version': item.json.version_tag | string,
+             'download_url': 'https://extensions.gnome.org' + item.json.download_url,
+             'archive': '/var/tmp/gnome-extension-'
+                        + (item.item.uuid | hash('sha1'))
+                        + '-v' + (item.json.version_tag | string) + '.zip'}] }}
+  loop: "{{ desktop_extension_release_queries.results }}"
+  when: desktop_gnome_shell_major in ((item.json | default({})).shell_version_map | default({}))
+  loop_control:
+    # Rendered for skipped items too, so don't read the response here.
+    label: "{{ item.item.uuid }}"
+
+- name: Create a directory per extension
+  ansible.builtin.file:
+    path: "{{ workstation_target_home }}/.local/share/gnome-shell/extensions/{{ item.uuid }}"
+    state: directory
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+    mode: "0755"
+  loop: "{{ desktop_extension_releases }}"
+  loop_control:
+    label: "{{ item.uuid }}"
+
+- name: Look for the marker left by the last install
+  ansible.builtin.stat:
+    path: "{{ workstation_target_home }}/.local/share/gnome-shell/extensions/{{ item.uuid }}/.ansible-ego-v{{ item.version }}"
+  loop: "{{ desktop_extension_releases }}"
+  register: desktop_extension_markers
+  loop_control:
+    label: "{{ item.uuid }} v{{ item.version }}"
+
+- name: Check whether the extension files are there
+  ansible.builtin.stat:
+    path: "{{ workstation_target_home }}/.local/share/gnome-shell/extensions/{{ item.uuid }}/metadata.json"
+  loop: "{{ desktop_extension_releases }}"
+  register: desktop_extension_payloads
+  loop_control:
+    label: "{{ item.uuid }}"
+
+- name: Say which extensions would be installed
+  ansible.builtin.debug:
+    msg: "Would install {{ item.item.uuid }} v{{ item.item.version }}."
+  loop: "{{ desktop_extension_markers.results }}"
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - not item.stat.exists or not desktop_extension_payloads.results[desktop_extension_check_index].stat.exists
+  loop_control:
+    label: "{{ item.item.uuid }} v{{ item.item.version }}"
+    index_var: desktop_extension_check_index
+
+- name: Download the extensions
+  ansible.builtin.get_url:
+    url: "{{ item.item.download_url }}"
+    dest: "{{ item.item.archive }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop: "{{ desktop_extension_markers.results }}"
+  when:
+    - not ansible_check_mode
+    - not item.stat.exists or not desktop_extension_payloads.results[desktop_extension_download_index].stat.exists
+  loop_control:
+    label: "{{ item.item.uuid }} v{{ item.item.version }}"
+    index_var: desktop_extension_download_index
+
+- name: Check the downloads arrived
+  ansible.builtin.stat:
+    path: "{{ item.archive }}"
+    checksum_algorithm: sha256
+  loop: "{{ desktop_extension_releases }}"
+  register: desktop_extension_archives
+  loop_control:
+    label: "{{ item.uuid }}"
+
+- name: Delete the old compiled schemas
+  ansible.builtin.file:
+    path: "{{ workstation_target_home }}/.local/share/gnome-shell/extensions/{{ item.item.uuid }}/schemas/gschemas.compiled"
+    state: absent
+  loop: "{{ desktop_extension_markers.results }}"
+  when:
+    - not ansible_check_mode
+    - not item.stat.exists or not desktop_extension_payloads.results[desktop_extension_schema_index].stat.exists
+    - desktop_extension_archives.results[desktop_extension_schema_index].stat.exists
+  loop_control:
+    label: "{{ item.item.uuid }}"
+    index_var: desktop_extension_schema_index
+
+- name: Unpack the extensions into your home
+  ansible.builtin.unarchive:
+    src: "{{ item.item.archive }}"
+    dest: "{{ workstation_target_home }}/.local/share/gnome-shell/extensions/{{ item.item.uuid }}"
+    remote_src: true
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+  loop: "{{ desktop_extension_markers.results }}"
+  when:
+    - not ansible_check_mode
+    - not item.stat.exists or not desktop_extension_payloads.results[desktop_extension_install_index].stat.exists
+    - desktop_extension_archives.results[desktop_extension_install_index].stat.exists
+  loop_control:
+    label: "{{ item.item.uuid }}"
+    index_var: desktop_extension_install_index
+
+- name: Look for extension schema directories
+  ansible.builtin.stat:
+    path: "{{ workstation_target_home }}/.local/share/gnome-shell/extensions/{{ item.uuid }}/schemas"
+  loop: "{{ desktop_extension_releases }}"
+  register: desktop_extension_schema_directories
+  loop_control:
+    label: "{{ item.uuid }}"
+
+- name: Compile the extension schemas
+  ansible.builtin.command:
+    argv:
+      - glib-compile-schemas
+      - --strict
+      - "{{ item.stat.path }}"
+    creates: "{{ item.stat.path }}/gschemas.compiled"
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+  loop: "{{ desktop_extension_schema_directories.results }}"
+  when: item.stat.isdir | default(false)
+  loop_control:
+    label: "{{ item.item.uuid }}"
+
+- name: Leave a marker saying what was installed
+  ansible.builtin.copy:
+    dest: "{{ workstation_target_home }}/.local/share/gnome-shell/extensions/{{ item.item.uuid }}/.ansible-ego-v{{ item.item.version }}"
+    content: "sha256:{{ desktop_extension_archives.results[desktop_extension_marker_index].stat.checksum }}\n"
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+    mode: "0644"
+  loop: "{{ desktop_extension_markers.results }}"
+  when:
+    - not ansible_check_mode
+    - not item.stat.exists or not desktop_extension_payloads.results[desktop_extension_marker_index].stat.exists
+    - desktop_extension_archives.results[desktop_extension_marker_index].stat.exists
+  loop_control:
+    label: "{{ item.item.uuid }}"
+    index_var: desktop_extension_marker_index
+
+- name: Read each extension's metadata.json
+  ansible.builtin.slurp:
+    src: "{{ workstation_target_home }}/.local/share/gnome-shell/extensions/{{ item.uuid }}/metadata.json"
+  loop: "{{ desktop_extension_releases }}"
+  register: desktop_extension_metadata
+  loop_control:
+    label: "{{ item.uuid }}"
+  when: >-
+    lookup('ansible.builtin.fileglob',
+           workstation_target_home + '/.local/share/gnome-shell/extensions/' + item.uuid + '/metadata.json',
+           errors='ignore') | length > 0
+
+- name: Check the extension really claims this Shell
+  ansible.builtin.assert:
+    that:
+      - >-
+        desktop_gnome_shell_major
+        in ((item.content | b64decode | from_json)['shell-version'] | map('string') | list)
+    fail_msg: >-
+      {{ item.item.uuid }} says it does not support {{ desktop_gnome_shell_version.stdout }}.
+  loop: "{{ desktop_extension_metadata.results }}"
+  when: not (item.skipped | default(false))
+  loop_control:
+    label: "{{ item.item.uuid }}"
+
+- name: Find the downloaded zips
+  ansible.builtin.find:
+    paths: /var/tmp
+    patterns: gnome-extension-*.zip
+    file_type: file
+  register: desktop_downloaded_extension_archives
+
+- name: Delete the zips
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: absent
+  loop: "{{ desktop_downloaded_extension_archives.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+# Ghostty might not have installed.
+- name: Check Ghostty actually installed
+  ansible.builtin.stat:
+    path: /usr/share/applications/{{ desktop_terminal_desktop_file }}
+  register: desktop_terminal_entry
+
+- name: Say the default terminal was left alone
+  ansible.builtin.debug:
+    msg: >-
+      {{ desktop_terminal_desktop_file }} is not installed, so the default terminal and the
+      {{ desktop_terminal_shortcut }} shortcut were left alone.
+  when: not desktop_terminal_entry.stat.exists
+
+- name: Make Ghostty the default terminal
+  community.general.xdg_mime:
+    mime_types:
+      - x-scheme-handler/terminal
+    handler: "{{ desktop_terminal_desktop_file }}"
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+  when: desktop_terminal_entry.stat.exists
+
+# The freedesktop terminal list, in case xdg-terminal-exec ever shows up.
+- name: Put Ghostty in the XDG terminal list
+  ansible.builtin.copy:
+    dest: "{{ workstation_target_home }}/.config/xdg-terminals.list"
+    content: "{{ desktop_terminal_desktop_file }}\n"
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+    mode: "0644"
+  when: desktop_terminal_entry.stat.exists
+
+- name: Set the terminal and its shortcut
+  community.general.dconf:
+    key: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+    XDG_RUNTIME_DIR: "/run/user/{{ workstation_target_uid }}"
+  loop: "{{ desktop_terminal_dconf_settings }}"
+  loop_control:
+    label: "{{ item.key }}"
+  when: desktop_terminal_entry.stat.exists
+
+- name: Apply my GNOME settings
+  community.general.dconf:
+    key: "{{ item.key }}"
+    value: "{{ item.value }}"
+    state: present
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+    XDG_RUNTIME_DIR: "/run/user/{{ workstation_target_uid }}"
+  loop: "{{ desktop_dconf_settings }}"
+  loop_control:
+    label: "{{ item.key }}"
+
+- name: Pick the extensions this run actually installed
+  ansible.builtin.set_fact:
+    desktop_installed_enabled_extensions: >-
+      {{ desktop_enabled_extensions
+         | select('in', desktop_extension_releases | default([]) | map(attribute='uuid') | list)
+         | list }}
+
+# An empty list has to carry its type or dconf rejects it.
+- name: Turn those extensions on
+  community.general.dconf:
+    key: /org/gnome/shell/enabled-extensions
+    value: "{{ desktop_installed_enabled_extensions | string if desktop_installed_enabled_extensions | length > 0 else '@as []' }}"
+    state: present
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+    XDG_RUNTIME_DIR: "/run/user/{{ workstation_target_uid }}"

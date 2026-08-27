@@ -1,0 +1,21 @@
+---
+- name: Test the SSH config
+  ansible.builtin.command:
+    argv: [sshd, -t]
+  changed_when: false
+
+- name: Reload sshd
+  ansible.builtin.systemd_service:
+    name: sshd
+    state: reloaded
+
+- name: Test the Fail2ban config
+  ansible.builtin.command:
+    argv: [fail2ban-client, -t]
+  changed_when: false
+
+- name: Restart Fail2ban
+  ansible.builtin.systemd_service:
+    name: fail2ban
+    state: restarted
+  when: not ansible_check_mode or 'fail2ban.service' in ansible_facts.services

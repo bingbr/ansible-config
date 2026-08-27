@@ -1,0 +1,113 @@
+---
+- name: Look for your authorized_keys
+  ansible.builtin.stat:
+    path: "{{ workstation_target_home }}/.ssh/authorized_keys"
+  register: remote_authorized_keys
+  when: remote_require_authorized_keys | bool
+
+# Checked before anything changes, because the config below turns off password logins.
+- name: Refuse to lock you out
+  ansible.builtin.assert:
+    that:
+      - remote_authorized_keys.stat.exists
+      - remote_authorized_keys.stat.size | default(0) | int > 0
+    fail_msg: >-
+      {{ workstation_target_home }}/.ssh/authorized_keys is missing or empty, so this would lock
+      {{ workstation_target_user }} out. Put a public key there first, or set
+      remote_require_authorized_keys=false to do it anyway.
+  when: remote_require_authorized_keys | bool
+
+- name: Install SSH, Fail2ban and Firewalld
+  ansible.builtin.dnf5:
+    name: "{{ remote_packages }}"
+    state: present
+
+- name: See which services exist now
+  ansible.builtin.service_facts:
+
+- name: Start Firewalld
+  ansible.builtin.systemd_service:
+    name: firewalld
+    enabled: true
+    state: started
+
+- name: Open the ports I still want
+  ansible.posix.firewalld:
+    zone: "{{ remote_firewall_zone }}"
+    service: "{{ item }}"
+    state: enabled
+    permanent: true
+    immediate: true
+  loop: "{{ remote_firewall_enabled_services }}"
+
+- name: Close the wide-open port ranges
+  ansible.posix.firewalld:
+    zone: "{{ remote_firewall_zone }}"
+    port: "{{ item }}"
+    state: disabled
+    permanent: true
+    immediate: true
+  loop: "{{ remote_firewall_disabled_ports }}"
+
+- name: Check the SSH settings make sense
+  ansible.builtin.assert:
+    that:
+      - remote_ssh_allowed_users | length > 0
+      - >-
+        remote_ssh_allowed_users | reject('equalto', '') | list | length ==
+        remote_ssh_allowed_users | length
+      - remote_ssh_max_auth_tries | int > 0
+      - remote_ssh_login_grace_time | int > 0
+    fail_msg: >-
+      This needs at least one SSH user and positive login limits.
+
+- name: Create the sshd config directory
+  ansible.builtin.file:
+    path: /etc/ssh/sshd_config.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Write the SSH hardening config
+  ansible.builtin.template:
+    src: 00-hardening.conf.j2
+    dest: /etc/ssh/sshd_config.d/00-hardening.conf
+    owner: root
+    group: root
+    mode: "0600"
+  notify:
+    - Test the SSH config
+    - Reload sshd
+
+- name: Configure Fail2ban
+  ansible.builtin.template:
+    src: jail.local.j2
+    dest: /etc/fail2ban/jail.local
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Test the Fail2ban config
+    - Restart Fail2ban
+
+- name: Start SSH and Fail2ban
+  ansible.builtin.systemd_service:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - sshd
+    - fail2ban
+  when: not ansible_check_mode or item ~ '.service' in ansible_facts.services
+
+- name: Say which services would be started
+  ansible.builtin.debug:
+    msg: "Would start {{ item }} once its package is installed."
+  loop:
+    - sshd
+    - fail2ban
+  changed_when: true
+  when:
+    - ansible_check_mode
+    - item ~ '.service' not in ansible_facts.services

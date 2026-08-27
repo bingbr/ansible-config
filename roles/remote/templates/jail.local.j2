@@ -1,0 +1,11 @@
+# Managed by fedora-workstation-ansible (remote).
+[DEFAULT]
+backend = systemd
+banaction = firewallcmd-rich-rules
+banaction_allports = firewallcmd-rich-rules
+bantime = {{ remote_fail2ban_bantime }}
+findtime = {{ remote_fail2ban_findtime }}
+maxretry = {{ remote_fail2ban_maxretry }}
+
+[sshd]
+enabled = true

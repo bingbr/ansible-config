@@ -1,0 +1,93 @@
+---
+- name: Install what Rust needs to build things
+  ansible.builtin.dnf5:
+    name: "{{ desktop_dev_rust_system_packages }}"
+    state: present
+
+- name: Install stable Rust
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/rustup-init
+      - -y
+      - --profile
+      - default
+      - --default-toolchain
+      - stable
+      - --no-modify-path
+  args:
+    creates: "{{ workstation_target_home }}/.cargo/bin/rustup"
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+    CARGO_HOME: "{{ workstation_target_home }}/.cargo"
+    RUSTUP_HOME: "{{ workstation_target_home }}/.rustup"
+
+- name: Update stable Rust
+  ansible.builtin.command:
+    argv:
+      - "{{ workstation_target_home }}/.cargo/bin/rustup"
+      - update
+      - stable
+  register: desktop_dev_rust_stable_update
+  changed_when: >-
+    'unchanged' not in (desktop_dev_rust_stable_update.stdout + desktop_dev_rust_stable_update.stderr)
+    and 'up to date' not in (desktop_dev_rust_stable_update.stdout + desktop_dev_rust_stable_update.stderr)
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+    CARGO_HOME: "{{ workstation_target_home }}/.cargo"
+    RUSTUP_HOME: "{{ workstation_target_home }}/.rustup"
+
+- name: Make stable the default
+  ansible.builtin.command:
+    argv:
+      - "{{ workstation_target_home }}/.cargo/bin/rustup"
+      - default
+      - stable
+  register: desktop_dev_rust_default_toolchain
+  changed_when: >-
+    'unchanged' not in (desktop_dev_rust_default_toolchain.stdout + desktop_dev_rust_default_toolchain.stderr)
+    and 'already' not in (desktop_dev_rust_default_toolchain.stdout + desktop_dev_rust_default_toolchain.stderr)
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+    CARGO_HOME: "{{ workstation_target_home }}/.cargo"
+    RUSTUP_HOME: "{{ workstation_target_home }}/.rustup"
+
+- name: Install Rustfmt and Clippy
+  ansible.builtin.command:
+    argv:
+      - "{{ workstation_target_home }}/.cargo/bin/rustup"
+      - component
+      - add
+      - rustfmt
+      - clippy
+  register: desktop_dev_rust_components
+  changed_when: >-
+    'is up to date' not in (desktop_dev_rust_components.stdout + desktop_dev_rust_components.stderr)
+    and 'unchanged' not in (desktop_dev_rust_components.stdout + desktop_dev_rust_components.stderr)
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+    CARGO_HOME: "{{ workstation_target_home }}/.cargo"
+    RUSTUP_HOME: "{{ workstation_target_home }}/.rustup"
+
+- name: Create the env.d directory
+  ansible.builtin.file:
+    path: "{{ workstation_target_home }}/.config/fedora-workstation/env.d"
+    state: directory
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+    mode: "0755"
+
+- name: Put Cargo on your PATH
+  ansible.builtin.template:
+    src: 20-rust.sh.j2
+    dest: "{{ workstation_target_home }}/.config/fedora-workstation/env.d/20-rust.sh"
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+    mode: "0644"

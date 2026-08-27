@@ -1,0 +1,5 @@
+*.retry
+*.log
+.ansible/
+inventory/*.vault.yml
+.DS_Store

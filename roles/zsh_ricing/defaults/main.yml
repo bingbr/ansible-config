@@ -1,0 +1,13 @@
+---
+zsh_ricing_packages:
+  - zsh
+  - git
+  - tar
+  - xz
+  - fontconfig
+
+zsh_ricing_antidote_release_api: https://api.github.com/repos/mattmc3/antidote/releases/latest
+zsh_ricing_nerd_font_release_api: https://api.github.com/repos/ryanoasis/nerd-fonts/releases/latest
+zsh_ricing_nerd_font_asset_name: JetBrainsMono.tar.xz
+zsh_ricing_nerd_font_archive: /var/cache/JetBrainsMono-NerdFont.tar.xz
+zsh_ricing_nerd_font_directory: /usr/local/share/fonts/JetBrainsMono

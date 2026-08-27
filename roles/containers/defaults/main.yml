@@ -1,0 +1,39 @@
+---
+# Docker lags Fedora release day. Checked before Podman is removed.
+containers_docker_repodata_url: >-
+  https://download.docker.com/linux/fedora/{{ ansible_facts.distribution_major_version }}/{{ ansible_facts.architecture }}/stable/repodata/repomd.xml
+
+# false writes the repo disabled, which is what happens on a release Docker has not published yet.
+containers_docker_repo_enabled: true
+
+containers_conflict_packages:
+  - podman
+  - podman-sequoia
+  - skopeo
+  - toolbox
+
+# Podman's own runtime bits. Only removable once podman goes, so one transaction.
+containers_orphaned_runtime_packages:
+  - aardvark-dns
+  - catatonit
+  - composefs
+  - conmon
+  - containers-common
+  - containers-common-extra
+  - criu
+  - criu-libs
+  - crun
+  - fuse-overlayfs
+  - netavark
+
+# Podman uses passt, but so does QEMU. Only removed when QEMU is not installed.
+containers_qemu_shared_runtime_packages:
+  - passt
+  - passt-selinux
+
+containers_docker_packages:
+  - docker-ce
+  - docker-ce-cli
+  - containerd.io
+  - docker-buildx-plugin
+  - docker-compose-plugin

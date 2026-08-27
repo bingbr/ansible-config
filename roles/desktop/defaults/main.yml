@@ -1,0 +1,106 @@
+---
+# Fedora's own repos.
+desktop_packages:
+  - adw-gtk3-theme
+  - fuse-libs
+  - xdg-utils          # provides xdg-mime, used to set the default terminal handler.
+  - gnome-extensions-app   # the Flatpak is 1.9 GB of runtime for an 880 KB app.
+  - papirus-icon-theme
+  - unzip
+
+# Third-party, and any of them can be down. Installed one at a time.
+desktop_third_party_packages:
+  - name: brave-browser
+    source: the Brave repository
+  - name: code
+    source: the Visual Studio Code repository
+  - name: ghostty
+    source: the scottames/ghostty COPR
+
+desktop_vscode_extensions:
+  - ms-azuretools.vscode-containers
+  - ms-azuretools.vscode-docker
+  - ms-vscode-remote.remote-containers
+  - pkief.material-icon-theme
+
+desktop_gnome_extensions:
+  - uuid: blur-my-shell@aunetx
+  - uuid: dash-to-dock@micxgx.gmail.com
+  - uuid: caffeine@patapon.info
+  - uuid: appindicatorsupport@rgcjonas.gmail.com
+  - uuid: just-perfection-desktop@just-perfection
+
+desktop_enabled_extensions:
+  - appindicatorsupport@rgcjonas.gmail.com
+  - blur-my-shell@aunetx
+  - dash-to-dock@micxgx.gmail.com
+  - caffeine@patapon.info
+  - just-perfection-desktop@just-perfection
+
+desktop_favorite_apps:
+  - org.gnome.Settings.desktop
+  - org.gnome.Software.desktop
+  - org.gnome.Nautilus.desktop
+  - org.gnome.TextEditor.desktop
+  - org.gnome.Calculator.desktop
+  - com.mitchellh.ghostty.desktop
+  - brave-browser.desktop
+  - app.zen_browser.zen.desktop
+
+desktop_dconf_settings:
+  - key: /org/gnome/desktop/interface/color-scheme
+    value: "'prefer-dark'"
+  - key: /org/gnome/desktop/interface/gtk-theme
+    value: "'adw-gtk3-dark'"
+  - key: /org/gnome/desktop/interface/icon-theme
+    value: "'Papirus'"
+  - key: /org/gnome/desktop/interface/monospace-font-name
+    value: "'JetBrainsMono Nerd Font Mono 11'"
+  - key: /org/gnome/desktop/interface/show-battery-percentage
+    value: "true"
+  - key: /org/gnome/desktop/peripherals/mouse/accel-profile
+    value: "'flat'"
+  - key: /org/gnome/nautilus/preferences/default-folder-viewer
+    value: "'list-view'"
+  - key: /org/gnome/nautilus/list-view/default-zoom-level
+    value: "'small'"
+  - key: /org/gnome/nautilus/list-view/use-tree-view
+    value: "true"
+  - key: /org/gnome/desktop/wm/preferences/button-layout
+    value: "'appmenu:minimize,close'"
+  - key: /org/gnome/settings-daemon/plugins/power/sleep-inactive-ac-type
+    value: "'nothing'"
+  - key: /org/gnome/desktop/privacy/report-technical-problems
+    value: "false"
+  - key: /org/gnome/system/location/enabled
+    value: "false"
+  - key: /org/gnome/shell/favorite-apps
+    value: "{{ desktop_favorite_apps | string }}"
+  - key: /org/gnome/shell/extensions/dash-to-dock/dock-position
+    value: "'BOTTOM'"
+  - key: /org/gnome/shell/extensions/dash-to-dock/dash-max-icon-size
+    value: "40"
+  - key: /org/gnome/shell/extensions/dash-to-dock/background-opacity
+    value: "0.8"
+
+# GNOME has no single "default terminal" switch, so set all three.
+desktop_terminal_desktop_file: com.mitchellh.ghostty.desktop
+desktop_terminal_command: ghostty
+# -e is Ghostty's "run this instead of a shell".
+desktop_terminal_exec_arg: "-e"
+desktop_terminal_shortcut: "<Control><Alt>t"
+
+desktop_terminal_dconf_settings:
+  # The dconf path drops the "default-" part. The obvious path does nothing.
+  - key: /org/gnome/desktop/applications/terminal/exec
+    value: "'{{ desktop_terminal_command }}'"
+  - key: /org/gnome/desktop/applications/terminal/exec-arg
+    value: "'{{ desktop_terminal_exec_arg }}'"
+  - key: /org/gnome/settings-daemon/plugins/media-keys/custom-keybindings
+    value: "['/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/']"
+  - key: /org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/name
+    value: "'Ghostty'"
+  - key: /org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/command
+    value: "'{{ desktop_terminal_command }}'"
+  - key: /org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/custom0/binding
+    value: "'{{ desktop_terminal_shortcut }}'"

@@ -1,0 +1,8 @@
+---
+- name: Rebuild the GRUB config
+  ansible.builtin.command:
+    argv:
+      - grub2-mkconfig
+      - -o
+      - "{{ snapshots_grub_config }}"
+  changed_when: true

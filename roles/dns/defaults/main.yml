@@ -1,0 +1,5 @@
+---
+# Asking for the profile turns it on. -e dns_enable=false takes it back off.
+dns_enable: true
+# The endpoints are the secret, so they live in inventory/localhost.vault.yml.
+dns_endpoints: []

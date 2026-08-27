@@ -1,0 +1,185 @@
+---
+- name: Update everything first
+  ansible.builtin.dnf5:
+    name: "*"
+    state: latest
+
+- name: Let dnf download 10 packages at once
+  community.general.ini_file:
+    path: /etc/dnf/dnf.conf
+    section: main
+    option: max_parallel_downloads
+    value: "10"
+    mode: "0644"
+    no_extra_spaces: true
+
+- name: Create the logind config directory
+  ansible.builtin.file:
+    path: /etc/systemd/logind.conf.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Stop the laptop sleeping when the lid shuts
+  ansible.builtin.copy:
+    dest: /etc/systemd/logind.conf.d/override.conf
+    content: |
+      [Login]
+      HandleLidSwitch=ignore
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Install the tools I want
+  ansible.builtin.dnf5:
+    name: "{{ system_explicit_packages }}"
+    state: present
+
+- name: List installed packages
+  ansible.builtin.package_facts:
+    manager: auto
+
+- name: Import the RPM Fusion signing keys
+  ansible.builtin.rpm_key:
+    key: "{{ item.key_url }}"
+    fingerprint:
+      - "{{ item.key_fingerprint }}"
+    state: present
+  loop: "{{ system_rpmfusion_repositories }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Download the RPM Fusion release packages
+  ansible.builtin.get_url:
+    url: "{{ item.release_url }}"
+    dest: "{{ item.release_path }}"
+    owner: root
+    group: root
+    mode: "0644"
+    timeout: 30
+  loop: "{{ system_rpmfusion_repositories }}"
+  loop_control:
+    label: "{{ item.name }}"
+  when: item.package not in ansible_facts.packages
+
+- name: Check the downloads arrived
+  ansible.builtin.stat:
+    path: "{{ item.release_path }}"
+  loop: "{{ system_rpmfusion_repositories }}"
+  register: system_rpmfusion_release_packages
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: Check the right key signed them
+  ansible.builtin.command:
+    argv:
+      - rpmkeys
+      - --checksig
+      - --verbose
+      - "{{ item.item.release_path }}"
+  loop: "{{ system_rpmfusion_release_packages.results }}"
+  register: system_rpmfusion_signature_check
+  when: item.stat.exists
+  changed_when: false
+  failed_when: >-
+    system_rpmfusion_signature_check.rc != 0
+    or 'NOKEY' in system_rpmfusion_signature_check.stdout
+    or 'NOT OK' in system_rpmfusion_signature_check.stdout
+    or (item.item.key_id | lower) not in
+       ((system_rpmfusion_signature_check.stdout
+         ~ system_rpmfusion_signature_check.stderr) | lower)
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Add the RPM Fusion repos
+  ansible.builtin.dnf5:
+    name: "{{ item.item.release_path }}"
+    state: present
+    # rpmkeys checked this package a moment ago.
+    disable_gpg_check: true
+  loop: "{{ system_rpmfusion_release_packages.results }}"
+  when: item.stat.exists
+  loop_control:
+    label: "{{ item.item.name }}"
+
+- name: Delete the downloaded rpms
+  ansible.builtin.file:
+    path: "{{ item.release_path }}"
+    state: absent
+  loop: "{{ system_rpmfusion_repositories }}"
+  loop_control:
+    label: "{{ item.name }}"
+
+- name: See which FFmpeg is installed
+  ansible.builtin.command:
+    argv:
+      - rpm
+      - --query
+      - "{{ item }}"
+  loop:
+    - ffmpeg-free
+    - ffmpeg
+  register: system_ffmpeg_packages
+  changed_when: false
+  failed_when: false
+
+- name: Swap Fedora's cut-down FFmpeg for the full one
+  ansible.builtin.command:
+    argv:
+      - dnf5
+      - --assumeyes
+      - swap
+      - ffmpeg-free
+      - ffmpeg
+      - --allowerasing
+  when:
+    - system_ffmpeg_packages.results[0].rc == 0
+    - system_ffmpeg_packages.results[1].rc != 0
+  changed_when: true
+
+- name: Install the multimedia group
+  ansible.builtin.dnf5:
+    name: "@multimedia"
+    state: present
+    install_weak_deps: false
+    exclude:
+      - PackageKit-gstreamer-plugin
+
+- name: See what graphics card is in here
+  ansible.builtin.command:
+    argv: [lspci, -nn]
+  register: system_lspci
+  changed_when: false
+  failed_when: false
+
+- name: Check the Intel media driver exists
+  ansible.builtin.command:
+    argv:
+      - dnf5
+      - repoquery
+      - --available
+      - intel-media-driver
+  register: system_intel_media_available
+  changed_when: false
+  failed_when: false
+
+- name: Install the Intel media driver
+  ansible.builtin.dnf5:
+    name: intel-media-driver
+    state: present
+  when:
+    - system_lspci.stdout is regex('(?im)^.*(VGA|Display|3D).*Intel')
+    - not ansible_check_mode or system_intel_media_available.stdout | length > 0
+
+- name: Install Flatpak
+  ansible.builtin.dnf5:
+    name: flatpak
+    state: present
+
+- name: Add Flathub
+  community.general.flatpak_remote:
+    name: flathub
+    flatpakrepo_url: https://dl.flathub.org/repo/flathub.flatpakrepo
+    method: system
+    state: present

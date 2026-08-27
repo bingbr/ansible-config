@@ -1,0 +1,7 @@
+# Managed by fedora-workstation-ansible (zsh_ricing).
+if [[ -d "$HOME/.config/fedora-workstation/env.d" ]]; then
+  for workstation_env in "$HOME"/.config/fedora-workstation/env.d/*.sh(N); do
+    source "$workstation_env"
+  done
+  unset workstation_env
+fi

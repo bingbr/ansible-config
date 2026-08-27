@@ -1,0 +1,226 @@
+---
+- name: Install Zsh and what it needs
+  ansible.builtin.dnf5:
+    name: "{{ zsh_ricing_packages }}"
+    state: present
+
+- name: Check git and zsh are here
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  loop:
+    - /usr/bin/git
+    - /usr/bin/zsh
+  register: zsh_ricing_command_paths
+
+- name: Ask GitHub for the latest Antidote
+  ansible.builtin.uri:
+    url: "{{ zsh_ricing_antidote_release_api }}"
+    return_content: true
+    status_code: 200
+    headers:
+      Accept: application/vnd.github+json
+      User-Agent: fedora-workstation-ansible
+  register: zsh_ricing_antidote_release
+  changed_when: false
+  check_mode: false
+
+- name: Check that release is a stable one
+  ansible.builtin.assert:
+    that:
+      - not (zsh_ricing_antidote_release.json.draft | default(true) | bool)
+      - not (zsh_ricing_antidote_release.json.prerelease | default(true) | bool)
+      - zsh_ricing_antidote_release.json.tag_name | default('') is match('^v[0-9]+([.][0-9]+){2}$')
+    fail_msg: GitHub did not hand back a stable Antidote release tag.
+
+- name: Clone or update Antidote
+  ansible.builtin.git:
+    repo: https://github.com/mattmc3/antidote.git
+    dest: "{{ workstation_target_home }}/.antidote"
+    version: "{{ zsh_ricing_antidote_release.json.tag_name }}"
+    depth: 1
+    single_branch: true
+    update: true
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+  when: not ansible_check_mode or zsh_ricing_command_paths.results[0].stat.exists
+
+- name: Create the env.d directory
+  ansible.builtin.file:
+    path: "{{ workstation_target_home }}/.config/fedora-workstation/env.d"
+    state: directory
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+    mode: "0755"
+
+- name: Write the plugin list
+  ansible.builtin.template:
+    src: zsh_plugins.txt.j2
+    dest: "{{ workstation_target_home }}/.zsh_plugins.txt"
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+    mode: "0644"
+
+- name: Write .zshrc
+  ansible.builtin.template:
+    src: zshrc.j2
+    dest: "{{ workstation_target_home }}/.zshrc"
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+    mode: "0644"
+
+- name: Write .zshenv and .profile
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "{{ workstation_target_home }}/{{ item.dest }}"
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+    mode: "0644"
+  loop:
+    - src: zshenv.j2
+      dest: .zshenv
+    - src: profile.j2
+      dest: .profile
+
+# Optional. It only changes how the prompt looks.
+- name: Install the JetBrainsMono Nerd Font
+  block:
+    - name: Ask GitHub for the latest Nerd Fonts
+      ansible.builtin.uri:
+        url: "{{ zsh_ricing_nerd_font_release_api }}"
+        return_content: true
+        headers:
+          Accept: application/vnd.github+json
+          User-Agent: fedora-workstation-ansible
+      register: zsh_ricing_nerd_font_release
+      changed_when: false
+      check_mode: false
+
+    - name: Find the JetBrainsMono archive in it
+      ansible.builtin.set_fact:
+        zsh_ricing_nerd_font_asset_candidates: >-
+          {{ zsh_ricing_nerd_font_release.json.assets
+             | selectattr('name', 'equalto', zsh_ricing_nerd_font_asset_name)
+             | list }}
+
+    - name: Check the release and its checksum
+      ansible.builtin.assert:
+        that:
+          - not (zsh_ricing_nerd_font_release.json.draft | default(true) | bool)
+          - not (zsh_ricing_nerd_font_release.json.prerelease | default(true) | bool)
+          - zsh_ricing_nerd_font_release.json.tag_name | default('') is match('^v[0-9]+[.][0-9]+[.][0-9]+$')
+          - zsh_ricing_nerd_font_asset_candidates | length == 1
+          - zsh_ricing_nerd_font_asset_candidates[0].digest | default('') is match('^sha256:[0-9a-f]{64}$')
+          - >-
+            zsh_ricing_nerd_font_asset_candidates[0].browser_download_url | default('')
+            is match('^https://github[.]com/ryanoasis/nerd-fonts/releases/download/')
+        fail_msg: >-
+          The latest Nerd Fonts release has no single checksummed
+          {{ zsh_ricing_nerd_font_asset_name }} asset.
+
+    - name: Keep the asset details
+      ansible.builtin.set_fact:
+        zsh_ricing_nerd_font_asset: "{{ zsh_ricing_nerd_font_asset_candidates[0] }}"
+
+    - name: Look for the marker from the last install
+      ansible.builtin.stat:
+        path: "{{ zsh_ricing_nerd_font_directory }}/.ansible-{{ zsh_ricing_nerd_font_release.json.tag_name }}-{{ zsh_ricing_nerd_font_asset.digest | regex_replace('^sha256:', '') }}"
+      register: zsh_ricing_nerd_font_marker
+
+    - name: Check the font files are there
+      ansible.builtin.stat:
+        path: "{{ zsh_ricing_nerd_font_directory }}/JetBrainsMonoNerdFontMono-Regular.ttf"
+      register: zsh_ricing_nerd_font_payload
+
+    - name: Download the font
+      ansible.builtin.get_url:
+        url: "{{ zsh_ricing_nerd_font_asset.browser_download_url }}"
+        dest: "{{ zsh_ricing_nerd_font_archive }}"
+        checksum: "{{ zsh_ricing_nerd_font_asset.digest }}"
+        owner: root
+        group: root
+        mode: "0644"
+      when:
+        - not ansible_check_mode
+        - not zsh_ricing_nerd_font_marker.stat.exists or not zsh_ricing_nerd_font_payload.stat.exists
+
+    - name: Check the download arrived
+      ansible.builtin.stat:
+        path: "{{ zsh_ricing_nerd_font_archive }}"
+      register: zsh_ricing_font_archive
+
+    - name: Create the font directory
+      ansible.builtin.file:
+        path: "{{ zsh_ricing_nerd_font_directory }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Unpack the font
+      ansible.builtin.unarchive:
+        src: "{{ zsh_ricing_nerd_font_archive }}"
+        dest: "{{ zsh_ricing_nerd_font_directory }}"
+        remote_src: true
+        owner: root
+        group: root
+      when:
+        - not ansible_check_mode
+        - not zsh_ricing_nerd_font_marker.stat.exists or not zsh_ricing_nerd_font_payload.stat.exists
+        - zsh_ricing_font_archive.stat.exists
+      notify: Refresh font cache
+
+    - name: Leave a marker saying which release is installed
+      ansible.builtin.copy:
+        dest: "{{ zsh_ricing_nerd_font_directory }}/.ansible-{{ zsh_ricing_nerd_font_release.json.tag_name }}-{{ zsh_ricing_nerd_font_asset.digest | regex_replace('^sha256:', '') }}"
+        content: "{{ zsh_ricing_nerd_font_asset.digest }}\n"
+        owner: root
+        group: root
+        mode: "0644"
+      when:
+        - not ansible_check_mode
+        - not zsh_ricing_nerd_font_marker.stat.exists or not zsh_ricing_nerd_font_payload.stat.exists
+        - zsh_ricing_font_archive.stat.exists
+
+    - name: Delete the archive
+      ansible.builtin.file:
+        path: "{{ zsh_ricing_nerd_font_archive }}"
+        state: absent
+
+  rescue:
+    - name: Say the font didn't install
+      ansible.builtin.debug:
+        msg: >-
+          Could not install {{ zsh_ricing_nerd_font_asset_name }}
+          ({{ ansible_failed_result.msg | default('no reason given') }}). Zsh is set up anyway.
+          The prompt shows placeholder glyphs until the font turns up.
+
+- name: Look for a Ghostty config directory
+  ansible.builtin.stat:
+    path: "{{ workstation_target_home }}/.config/ghostty"
+  register: zsh_ricing_ghostty_directory
+
+- name: Create the Ghostty config directory
+  ansible.builtin.file:
+    path: "{{ workstation_target_home }}/.config/ghostty"
+    state: directory
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+    mode: "0755"
+
+- name: Write the Ghostty config
+  ansible.builtin.template:
+    src: ghostty-config.j2
+    dest: "{{ workstation_target_home }}/.config/ghostty/config"
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+    mode: "0644"
+  when: not ansible_check_mode or zsh_ricing_ghostty_directory.stat.exists
+
+# Last, so a run that dies early leaves you on your old shell.
+- name: Switch your login shell to Zsh
+  ansible.builtin.user:
+    name: "{{ workstation_target_user }}"
+    shell: /usr/bin/zsh
+  when: not ansible_check_mode or zsh_ricing_command_paths.results[1].stat.exists

@@ -1,0 +1,24 @@
+---
+snapshots_packages:
+  - snapper
+  - btrfs-assistant
+
+snapshots_snapper_config: root
+
+# A snapshot is taken before a run changes anything. Only the newest five are kept.
+snapshots_snapper_settings:
+  NUMBER_CLEANUP: "yes"
+  NUMBER_MIN_AGE: "0"
+  NUMBER_LIMIT: "5"
+  TIMELINE_CREATE: "no"
+
+# Options for the /.snapshots entry. They mirror what Fedora writes for / and /home.
+snapshots_mount_options: compress=zstd:1,x-systemd.device-timeout=0
+
+# Puts snapshots in the boot menu. Comes from a COPR, Fedora doesn't package it.
+# false skips the COPR and keeps snapper on its own.
+snapshots_enable_grub_menu: true
+snapshots_grub_btrfs_copr: kylegospo/grub-btrfs
+snapshots_grub_btrfs_packages:
+  - grub-btrfs
+snapshots_grub_config: /boot/grub2/grub.cfg

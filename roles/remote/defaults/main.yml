@@ -1,0 +1,29 @@
+---
+remote_packages:
+  - openssh-server
+  - fail2ban
+  - fail2ban-firewalld
+  - firewalld
+
+remote_firewall_zone: FedoraWorkstation
+remote_firewall_enabled_services:
+  - dhcpv6-client
+  - samba-client
+  - ssh
+remote_firewall_disabled_ports:
+  - 1025-65535/tcp
+  - 1025-65535/udp
+
+# Refuse to turn off password logins when you have no key installed.
+remote_require_authorized_keys: true
+
+remote_ssh_allowed_users:
+  - "{{ workstation_target_user }}"
+remote_ssh_allow_tcp_forwarding: true
+remote_ssh_max_auth_tries: 3
+remote_ssh_login_grace_time: 30
+remote_ssh_max_startups: "10:30:60"
+
+remote_fail2ban_bantime: 1h
+remote_fail2ban_findtime: 1h
+remote_fail2ban_maxretry: 2

@@ -1,0 +1,46 @@
+---
+- name: Check whether this is an atomic install  # noqa var-naming[no-role-prefix]
+  ansible.builtin.stat:
+    path: /run/ostree-booted
+  register: workstation_ostree_boot
+
+- name: Read your user account
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ workstation_target_user }}"
+
+- name: Note your uid, gid and home  # noqa var-naming[no-role-prefix]
+  ansible.builtin.set_fact:
+    workstation_target_uid: "{{ ansible_facts.getent_passwd[workstation_target_user][1] }}"
+    workstation_target_gid: "{{ ansible_facts.getent_passwd[workstation_target_user][2] }}"
+    workstation_target_home: "{{ ansible_facts.getent_passwd[workstation_target_user][4] }}"
+
+- name: Check this is Fedora Workstation  # noqa var-naming[no-role-prefix]
+  ansible.builtin.command:
+    argv:
+      - rpm
+      - --quiet
+      - --query
+      - fedora-release-workstation
+  register: workstation_release_package
+  changed_when: false
+  failed_when: false
+  check_mode: false
+
+- name: Make sure this machine is supported
+  ansible.builtin.assert:
+    that:
+      - ansible_facts['distribution'] == 'Fedora'
+      - ansible_facts['architecture'] == 'x86_64'
+      - not workstation_ostree_boot.stat.exists
+      - workstation_release_package.rc == 0
+      - workstation_target_user != 'root'
+      - workstation_target_home != '/root'
+    fail_msg: >-
+      This only runs on plain Fedora Workstation, x86_64, as a normal user rather than root.
+
+- name: Check dnf5 is here
+  ansible.builtin.command:
+    argv: [dnf5, --version]
+  changed_when: false
+  check_mode: false

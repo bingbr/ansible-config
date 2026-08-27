@@ -1,0 +1,150 @@
+---
+- name: Ask Docker if it has packages for this Fedora
+  ansible.builtin.uri:
+    url: "{{ containers_docker_repodata_url }}"
+    method: HEAD
+    status_code:
+      - 200
+      - 404
+  register: containers_docker_repodata
+  failed_when: false
+  changed_when: false
+  check_mode: false
+
+- name: Say that Docker isn't ready yet
+  ansible.builtin.debug:
+    msg: >-
+      Docker has no packages for Fedora {{ ansible_facts.distribution_major_version }} yet
+      ({{ containers_docker_repodata_url }} returned
+      {{ containers_docker_repodata.status | default('no response') }}).
+      Leaving Podman where it is.
+  when: containers_docker_repodata.status | default(0) != 200
+
+# An old repo makes dnf 404 on every command. Switched back on once Docker publishes.
+- name: Look for a Docker repo from an older release
+  ansible.builtin.stat:
+    path: /etc/yum.repos.d/docker-ce.repo
+  register: containers_stale_docker_repository
+  when: containers_docker_repodata.status | default(0) != 200
+
+- name: Disable the Docker repo this release can't use
+  ansible.builtin.template:
+    src: docker-ce.repo.j2
+    dest: /etc/yum.repos.d/docker-ce.repo
+    owner: root
+    group: root
+    mode: "0644"
+  vars:
+    containers_docker_repo_enabled: false
+  when:
+    - containers_docker_repodata.status | default(0) != 200
+    - containers_stale_docker_repository.stat.exists | default(false)
+
+- name: Swap Podman for Docker
+  when: containers_docker_repodata.status | default(0) == 200
+  block:
+    - name: List installed packages
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Remove Podman and the tools built on it
+      ansible.builtin.dnf5:
+        name: >-
+          {{ (containers_conflict_packages + containers_orphaned_runtime_packages)
+             | intersect(ansible_facts.packages.keys() | list) }}
+        state: absent
+      when: >-
+        (containers_conflict_packages + containers_orphaned_runtime_packages)
+        | intersect(ansible_facts.packages.keys() | list) | length > 0
+
+    - name: List installed packages again
+      ansible.builtin.package_facts:
+        manager: auto
+
+    - name: Remove the leftovers QEMU isn't using
+      ansible.builtin.dnf5:
+        name: >-
+          {{ containers_qemu_shared_runtime_packages
+             | intersect(ansible_facts.packages.keys() | list) }}
+        state: absent
+      when:
+        - >-
+          containers_qemu_shared_runtime_packages
+          | intersect(ansible_facts.packages.keys() | list) | length > 0
+        - >-
+          ansible_facts.packages.keys()
+          | select('match', '^qemu-system') | list | length == 0
+
+    - name: Download Docker's signing key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/fedora/gpg
+        dest: /etc/pki/rpm-gpg/RPM-GPG-KEY-docker
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Check the key arrived
+      ansible.builtin.stat:
+        path: /etc/pki/rpm-gpg/RPM-GPG-KEY-docker
+      register: containers_docker_signing_key
+
+    - name: Import Docker's signing key
+      ansible.builtin.rpm_key:
+        key: /etc/pki/rpm-gpg/RPM-GPG-KEY-docker
+        state: present
+      when: containers_docker_signing_key.stat.exists
+
+    - name: Add the Docker repo
+      ansible.builtin.template:
+        src: docker-ce.repo.j2
+        dest: /etc/yum.repos.d/docker-ce.repo
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Check the repo file is there
+      ansible.builtin.stat:
+        path: /etc/yum.repos.d/docker-ce.repo
+      register: containers_docker_repository
+
+    - name: Install Docker and its plugins
+      ansible.builtin.dnf5:
+        name: "{{ containers_docker_packages }}"
+        state: latest
+      when: not ansible_check_mode or containers_docker_repository.stat.exists
+
+    - name: Create /etc/docker
+      ansible.builtin.file:
+        path: /etc/docker
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      when: not ansible_check_mode or 'docker-ce' in ansible_facts.packages
+
+    - name: Write the Docker daemon config
+      ansible.builtin.copy:
+        src: daemon.json
+        dest: /etc/docker/daemon.json
+        owner: root
+        group: root
+        mode: "0644"
+        validate: /usr/bin/dockerd --validate --config-file=%s
+      notify: Restart Docker
+      when: not ansible_check_mode or 'docker-ce' in ansible_facts.packages
+
+    - name: Add you to the docker group
+      ansible.builtin.user:
+        name: "{{ workstation_target_user }}"
+        groups:
+          - docker
+        append: true
+      notify: Mention the logout Docker needs
+      when: not ansible_check_mode or 'docker-ce' in ansible_facts.packages
+
+    - name: Start Docker
+      ansible.builtin.systemd_service:
+        name: docker
+        enabled: true
+        state: started
+      when: not ansible_check_mode or 'docker-ce' in ansible_facts.packages

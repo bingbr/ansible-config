@@ -1,0 +1,215 @@
+---
+- name: Install curl and unzip
+  ansible.builtin.dnf5:
+    name: "{{ web_dev_packages }}"
+    state: present
+
+- name: Look for Bun
+  ansible.builtin.stat:
+    path: "{{ workstation_target_home }}/.bun/bin/bun"
+  register: web_dev_bun_command
+
+- name: Read the Bun version
+  ansible.builtin.command:
+    argv:
+      - "{{ workstation_target_home }}/.bun/bin/bun"
+      - --version
+  register: web_dev_bun_version_before
+  changed_when: false
+  check_mode: false
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+    BUN_INSTALL: "{{ workstation_target_home }}/.bun"
+  when: web_dev_bun_command.stat.exists
+
+- name: Download the Bun installer
+  ansible.builtin.get_url:
+    url: "{{ web_dev_bun_installer_url }}"
+    dest: /var/tmp/bun-install.sh
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+    mode: "0755"
+  when: not web_dev_bun_command.stat.exists
+
+- name: Run the Bun installer
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/bash
+      - /var/tmp/bun-install.sh
+  args:
+    creates: "{{ workstation_target_home }}/.bun/bin/bun"
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+    BUN_INSTALL: "{{ workstation_target_home }}/.bun"
+
+- name: Delete the Bun installer
+  ansible.builtin.file:
+    path: /var/tmp/bun-install.sh
+    state: absent
+
+- name: Update Bun
+  ansible.builtin.command:
+    argv:
+      - "{{ workstation_target_home }}/.bun/bin/bun"
+      - upgrade
+      - --stable
+  changed_when: false
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+    BUN_INSTALL: "{{ workstation_target_home }}/.bun"
+  when:
+    - not ansible_check_mode
+    - web_dev_bun_command.stat.exists
+
+- name: Read the Bun version again
+  ansible.builtin.command:
+    argv:
+      - "{{ workstation_target_home }}/.bun/bin/bun"
+      - --version
+  register: web_dev_bun_version_after
+  changed_when: false
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+    BUN_INSTALL: "{{ workstation_target_home }}/.bun"
+  when:
+    - not ansible_check_mode
+    - web_dev_bun_command.stat.exists
+
+- name: Say if Bun changed version
+  ansible.builtin.debug:
+    msg: >-
+      Bun updated from {{ web_dev_bun_version_before.stdout }}
+      to {{ web_dev_bun_version_after.stdout }}.
+  changed_when: web_dev_bun_version_before.stdout != web_dev_bun_version_after.stdout
+  when:
+    - not ansible_check_mode
+    - web_dev_bun_command.stat.exists
+
+- name: Look for Vite+
+  ansible.builtin.stat:
+    path: "{{ workstation_target_home }}/.vite-plus/bin/vp"
+  register: web_dev_vite_plus_command
+
+- name: Download the Vite+ installer
+  ansible.builtin.get_url:
+    url: "{{ web_dev_vite_plus_installer_url }}"
+    dest: /var/tmp/vite-plus-install.sh
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+    mode: "0755"
+  when: not web_dev_vite_plus_command.stat.exists
+
+- name: Run the Vite+ installer
+  ansible.builtin.command:
+    argv:
+      - /usr/bin/bash
+      - /var/tmp/vite-plus-install.sh
+  args:
+    creates: "{{ workstation_target_home }}/.vite-plus/bin/vp"
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+    VP_HOME: "{{ workstation_target_home }}/.vite-plus"
+    CI: "1"
+
+- name: Delete the Vite+ installer
+  ansible.builtin.file:
+    path: /var/tmp/vite-plus-install.sh
+    state: absent
+
+- name: Update Vite+
+  ansible.builtin.command:
+    argv:
+      - "{{ workstation_target_home }}/.vite-plus/bin/vp"
+      - upgrade
+  register: web_dev_vite_plus_upgrade
+  changed_when: >-
+    'already' not in (web_dev_vite_plus_upgrade.stdout + web_dev_vite_plus_upgrade.stderr) | lower
+    and 'up to date' not in (web_dev_vite_plus_upgrade.stdout + web_dev_vite_plus_upgrade.stderr) | lower
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+    VP_HOME: "{{ workstation_target_home }}/.vite-plus"
+    CI: "1"
+  when:
+    - not ansible_check_mode
+    - web_dev_vite_plus_command.stat.exists
+
+- name: List Bun's global packages
+  ansible.builtin.command:
+    argv:
+      - "{{ workstation_target_home }}/.bun/bin/bun"
+      - pm
+      - ls
+      - --global
+  register: web_dev_bun_globals
+  changed_when: false
+  failed_when: false
+  check_mode: false
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+    BUN_INSTALL: "{{ workstation_target_home }}/.bun"
+
+- name: Update my Bun global packages
+  ansible.builtin.command:
+    argv:
+      - "{{ workstation_target_home }}/.bun/bin/bun"
+      - update
+      - --global
+      - "{{ item }}"
+  loop: "{{ web_dev_bun_global_packages }}"
+  register: web_dev_bun_global_updates
+  changed_when: >-
+    'no changes' not in (web_dev_bun_global_updates.stdout + web_dev_bun_global_updates.stderr) | lower
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+    BUN_INSTALL: "{{ workstation_target_home }}/.bun"
+  when:
+    - not ansible_check_mode
+    - item in web_dev_bun_globals.stdout
+
+- name: Install my Bun global packages
+  ansible.builtin.command:
+    argv:
+      - "{{ workstation_target_home }}/.bun/bin/bun"
+      - add
+      - --global
+      - "{{ item }}"
+  loop: "{{ web_dev_bun_global_packages }}"
+  when: item not in web_dev_bun_globals.stdout
+  changed_when: true
+  become: true
+  become_user: "{{ workstation_target_user }}"
+  environment:
+    HOME: "{{ workstation_target_home }}"
+    BUN_INSTALL: "{{ workstation_target_home }}/.bun"
+
+- name: Create the env.d directory
+  ansible.builtin.file:
+    path: "{{ workstation_target_home }}/.config/fedora-workstation/env.d"
+    state: directory
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+    mode: "0755"
+
+- name: Put Bun and Vite+ on your PATH
+  ansible.builtin.template:
+    src: 30-web-dev.sh.j2
+    dest: "{{ workstation_target_home }}/.config/fedora-workstation/env.d/30-web-dev.sh"
+    owner: "{{ workstation_target_user }}"
+    group: "{{ workstation_target_gid }}"
+    mode: "0644"

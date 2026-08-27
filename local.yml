@@ -1,0 +1,43 @@
+---
+- name: Set up this Fedora machine
+  hosts: workstation
+  connection: local
+  gather_facts: true
+  become: true
+
+  pre_tasks:
+    - name: Work out which profiles to run
+      ansible.builtin.set_fact:
+        workstation_active_profiles: >-
+          {{ workstation_all_profiles
+             if 'all' in (workstation_profile_csv.split(',') | map('trim') | reject('equalto', '') | list)
+             else (workstation_profile_csv.split(',') | map('trim') | reject('equalto', '') | list
+                   if workstation_profile_csv | length > 0
+                   else workstation_default_profiles) }}
+
+    - name: Reject profiles that don't exist
+      ansible.builtin.assert:
+        that:
+          - workstation_active_profiles | difference(workstation_all_profiles) | length == 0
+        fail_msg: >-
+          No such profile: {{ workstation_active_profiles | difference(workstation_all_profiles) | join(', ') }}.
+          Pick from: {{ workstation_all_profiles | join(', ') }}, all.
+
+    - name: Check the machine first
+      ansible.builtin.include_role:
+        name: preflight
+
+  tasks:
+    - name: Run the chosen profiles
+      ansible.builtin.include_role:
+        name: "{{ workstation_profile }}"
+        apply:
+          tags:
+            - "{{ workstation_profile }}"
+      loop: "{{ workstation_profile_order }}"
+      loop_control:
+        loop_var: workstation_profile
+        label: "{{ workstation_profile }}"
+      when: workstation_profile in workstation_active_profiles
+      tags:
+        - always
